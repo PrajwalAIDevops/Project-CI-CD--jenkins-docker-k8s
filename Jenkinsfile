@@ -11,8 +11,7 @@ pipeline {
             steps {
                 git branch: 'main',
                     url: 'https://github.com/PrajwalAIDevops/Project-CI-CD--jenkins-docker-k8s.git'
-
-                stash includes: '**', name: 'source'
+                    stash includes: '**', name: 'source'
             }
         }
 
@@ -27,7 +26,6 @@ pipeline {
                     . venv/bin/activate
                     pip install --no-cache-dir -r requirements.txt
                 """
-                
             }
         }
 
@@ -51,66 +49,63 @@ pipeline {
                 }
             }
         }
-
-        stage("trivy-file-system-scanner") {
-            agent {
-                label 'slave-1 sonarqube'
-            }
-
-            steps {
+            stage("trivy-file-system-scanner")
+            {
+                agent{
+                    label 'slave-1 sonarqube'
+                }
+            steps{
                 sh "trivy fs --format table --output trivy-report.txt ."
             }
+            }
+            
+           stage('Docker Login') {
+    agent {
+        label 'docker'
+    }
+    steps {
+        withCredentials([usernamePassword(
+            credentialsId: 'dockerhub',
+            usernameVariable: 'DOCKER_USER',
+            passwordVariable: 'DOCKER_PASS'
+        )]) {
+            sh '''
+                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+            '''
         }
-
-        stage("Docker Login") {
-            agent {
-                label 'docker'
-            }
-
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh '''
-                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                    '''
-                }
-            }
+    }
+}
+    stage("docker build")
+    {
+        agent {
+            label "docker"
         }
-
-        stage("Docker Build") {
-            agent {
-                label "docker"
-            }
-
-            steps {
-                unstash 'source'
-
-                sh "docker build -t prajwaldevops10/devops-flask:${BUILD_NUMBER} ."
-            }
+        steps{
+             unstash 'source'
+        sh " docker build -t prajwaldevops10/devops-flask:${BUILD_NUMBER} ."
+    }}
+    
+    stage("docker push and run"){
+        agent{
+            label "docker"
         }
-
-        stage("Docker Image Scan") {
-            agent {
-                label "docker"
-            }
-
-            steps {
-                sh "trivy image --format table --output trivy-image-report.txt prajwaldevops10/devops-flask:${BUILD_NUMBER}"
-            }
+        steps{
+            sh "docker push prajwaldevops10/devops-flask:${BUILD_NUMBER}"
+           
         }
+    }
+    stage('Deploy to Kubernetes') {
+    agent {
+        label 'docker'
+    }
 
-        stage("Docker Push and Run") {
-            agent {
-                label "docker"
-            }
+    steps {
+        sh """
+            sed -i 's|image:.*|image: prajwaldevops10/devops-flask:${BUILD_NUMBER}|' k8s/deployment.yaml
 
-            steps {
-                sh "docker push prajwaldevops10/devops-flask:${BUILD_NUMBER}"
-                sh "docker run --name flask -d -p 5000:5000 prajwaldevops10/devops-flask:${BUILD_NUMBER}"
-            }
-        }
+            kubectl apply -f k8s/
+        """
+    }
+}
     }
 }
